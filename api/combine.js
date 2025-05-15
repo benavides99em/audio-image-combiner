@@ -1,32 +1,57 @@
-import { execSync } from "child_process"
-import fs from "fs"
-import axios from "axios"
+import { writeFile, readFile } from 'fs/promises';
+import path from 'path';
+import { tmpdir } from 'os';
+import { createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
+import fetch from 'node-fetch';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 export default async function handler(req, res) {
-  const { imageUrl, audioBase64 } = req.body
-
-  if (!imageUrl || !audioBase64) {
-    return res.status(400).json({ error: "Faltan datos" })
-  }
-
   try {
-    const imagePath = "/tmp/image.png"
-    const audioPath = "/tmp/audio.mp3"
-    const videoPath = "/tmp/video.mp4"
+    const { imageUrl, audioBase64 } = req.body;
 
-    const img = await axios.get(imageUrl, { responseType: "arraybuffer" })
-    fs.writeFileSync(imagePath, img.data)
-    fs.writeFileSync(audioPath, Buffer.from(audioBase64, "base64"))
+    if (!imageUrl || !audioBase64) {
+      return res.status(400).json({ error: "Missing imageUrl or audioBase64" });
+    }
 
-    execSync(
-      `ffmpeg -loop 1 -i ${imagePath} -i ${audioPath} -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p ${videoPath}`
-    )
+    const tempDir = tmpdir();
+    const imagePath = path.join(tempDir, 'image.png');
+    const audioPath = path.join(tempDir, 'audio.mp3');
+    const videoPath = path.join(tempDir, 'video.mp4');
 
-    const videoBuffer = fs.readFileSync(videoPath)
-    res.setHeader("Content-Type", "video/mp4")
-    res.send(videoBuffer)
-  } catch (e) {
-    console.error(e)
-    res.status(500).json({ error: "Error al generar el video" })
+    // Descargar imagen
+    const response = await fetch(imageUrl);
+    const imageStream = createWriteStream(imagePath);
+    await pipeline(response.body, imageStream);
+
+    // Guardar audio base64
+    const audioBuffer = Buffer.from(audioBase64, 'base64');
+    await writeFile(audioPath, audioBuffer);
+
+    // Generar video
+    await new Promise((resolve, reject) => {
+      ffmpeg()
+        .input(imagePath)
+        .loop(5)
+        .input(audioPath)
+        .audioCodec('aac')
+        .videoCodec('libx264')
+        .outputOptions('-shortest')
+        .output(videoPath)
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
+
+    const videoBuffer = await readFile(videoPath);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.send(videoBuffer);
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
   }
 }
