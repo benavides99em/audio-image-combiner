@@ -1,1 +1,12 @@
-
+{
+  "name": "audio-image-combiner",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "type": "module"
+}
